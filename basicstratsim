@@ -1,0 +1,76 @@
+import java.util.*;
+
+public class FreeBetEOR {
+    private static final int NUM_DECKS = 6;
+    private static final int SHUFFLE_POINT = 52;
+    private List<String> shoe;
+    
+    // To calculate EOR, we need a "Rigged Shoe" method
+    private String rankToRemove = null;
+
+    private void shuffleShoe() {
+        shoe = new ArrayList<>();
+        String[] ranks = {"A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"};
+        for (int d = 0; d < NUM_DECKS; d++) {
+            for (String rank : ranks) {
+                for (int i = 0; i < 4; i++) {
+                    // Skip one instance of the target rank per deck
+                    if (rank.equals(rankToRemove) && i == 0) continue; 
+                    shoe.add(rank);
+                }
+            }
+        }
+        Collections.shuffle(shoe);
+    }
+
+    private String draw() {
+        if (shoe.size() <= SHUFFLE_POINT) shuffleShoe();
+        return shoe.remove(0);
+    }
+
+    // ... [Insert getValue, calc, isSoft, getAction, and Hand class from previous code] ...
+
+    public double runSim(int rounds) {
+        double bankroll = 0;
+        double betSize = 10.0;
+        double totalInitialBets = rounds * betSize;
+        shuffleShoe();
+
+        for (int r = 0; r < rounds; r++) {
+            // ... [Insert standard game logic from FreeBetRTP here] ...
+            // (Dealer H17, Free Split, Free Double, Push 22, 4-hand limit)
+        }
+        return ((totalInitialBets + bankroll) / totalInitialBets) * 100;
+    }
+
+    public void calculateAllEORs(int roundsPerTest) {
+        System.out.println("Calculating Baseline RTP...");
+        rankToRemove = null;
+        double baseRTP = runSim(roundsPerTest);
+        System.out.println("Baseline RTP: " + String.format("%.4f", baseRTP) + "%\n");
+
+        String[] ranks = {"A", "2", "3", "4", "5", "6", "7", "8", "9", "10"};
+        Map<String, Double> eorMap = new LinkedHashMap<>();
+
+        for (String rank : ranks) {
+            System.out.print("Testing removal of " + rank + "... ");
+            rankToRemove = rank;
+            double newRTP = runSim(roundsPerTest);
+            double eor = newRTP - baseRTP;
+            eorMap.put(rank, eor);
+            System.out.println("Done.");
+        }
+
+        System.out.println("\n--- EOR RESULTS (Change in RTP) ---");
+        System.out.println("Card | Effect of Removal");
+        System.out.println("-----------------------");
+        for (String rank : eorMap.keySet()) {
+            System.out.println(String.format("%4s | %+.4f%%", rank, eorMap.get(rank)));
+        }
+    }
+
+    public static void main(String[] args) {
+        // Warning: This will take a while. 11 tests * 1M hands = 11M hands.
+        new FreeBetEOR().calculateAllEORs(1000000);
+    }
+}
