@@ -1,0 +1,150 @@
+import java.util.*;
+
+public class FreeBetEORSolitaire {
+    private static final int NUM_DECKS = 6;
+    private static final int SHUFFLE_POINT = 52;
+    private List<String> shoe;
+    private String rankToRemove = null;
+
+    // Game Constants
+    private final double BET_SIZE = 10.0;
+
+    public void shuffleShoe() {
+        shoe = new ArrayList<>();
+        String[] ranks = {"A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"};
+        for (int d = 0; d < NUM_DECKS; d++) {
+            for (String rank : ranks) {
+                int count = 4;
+                // EOR Logic: Remove one card of this rank per deck
+                if (rank.equals(rankToRemove)) count = 3; 
+                
+                for (int i = 0; i < count; i++) shoe.add(rank);
+            }
+        }
+        Collections.shuffle(shoe);
+    }
+
+    private String draw() {
+        if (shoe.size() <= SHUFFLE_POINT) shuffleShoe();
+        return shoe.remove(0);
+    }
+
+    private int getValue(String rank) {
+        if (rank.equals("A")) return 1;
+        if ("JQK".contains(rank) || rank.equals("10")) return 10;
+        return Integer.parseInt(rank);
+    }
+
+    private int calc(List<String> hand) {
+        int total = 0, aces = 0;
+        for (String card : hand) {
+            int val = getValue(card);
+            if (val == 1) { aces++; total += 11; }
+            else total += val;
+        }
+        while (total > 21 && aces > 0) { total -= 10; aces--; }
+        return total;
+    }
+
+    private boolean isSoft(List<String> hand) {
+        int total = 0, aces = 0;
+        for (String card : hand) {
+            if (getValue(card) == 1) { aces++; total += 11; }
+            else total += getValue(card);
+        }
+        while (total > 21 && aces > 0) { total -= 10; aces--; }
+        return aces > 0 && total <= 21;
+    }
+
+    private String getAction(List<String> pCards, int dUp, int totalHands) {
+        int pTotal = calc(pCards);
+        boolean soft = isSoft(pCards);
+        if (pCards.size() == 2 && pCards.get(0).equals(pCards.get(1)) && getValue(pCards.get(0)) != 10 && totalHands < 4) return "FREE_SPLIT";
+        if (pCards.size() == 2 && pTotal >= 9 && pTotal <= 11 && !pCards.contains("A")) return "FREE_DOUBLE";
+        if (pCards.size() == 2 && soft && (pTotal == 17 || pTotal == 18) && (dUp == 5 || dUp == 6)) return "PAID_DOUBLE";
+        if (!soft) {
+            if (pTotal >= 17) return "STAND";
+            if (pTotal >= 13 && pTotal <= 16) return (dUp >= 2 && dUp <= 6) ? "STAND" : "HIT";
+            if (pTotal == 12) return (dUp >= 5 && dUp <= 6) ? "STAND" : "HIT";
+            return "HIT";
+        }
+        return (pTotal >= 19 || (pTotal == 18 && dUp < 9)) ? "STAND" : "HIT";
+    }
+
+    public double runSim(int rounds) {
+        double bankroll = 0;
+        shuffleShoe();
+        for (int r = 0; r < rounds; r++) {
+            String dUpStr = draw(), dHidden = draw();
+            int dUp = getValue(dUpStr);
+            List<String> dealerCards = new ArrayList<>(Arrays.asList(dUpStr, dHidden));
+            List<Hand> playerHands = new ArrayList<>();
+            playerHands.add(new Hand(draw(), draw(), true));
+
+            for (int i = 0; i < playerHands.size(); i++) {
+                Hand h = playerHands.get(i);
+                while (true) {
+                    if (h.isBJ || h.isDone || calc(h.cards) > 21) break;
+                    String action = getAction(h.cards, dUp, playerHands.size());
+                    if (action.equals("FREE_SPLIT")) {
+                        String splitCard = h.cards.remove(1);
+                        boolean isAces = splitCard.equals("A");
+                        h.cards.add(draw());
+                        Hand newH = new Hand(splitCard, draw(), false);
+                        playerHands.add(newH);
+                        if (isAces) { h.isDone = true; newH.isDone = true; break; }
+                    } else if (action.equals("FREE_DOUBLE") || action.equals("PAID_DOUBLE")) {
+                        h.isFreeDouble = action.equals("FREE_DOUBLE");
+                        h.isPaidDouble = action.equals("PAID_DOUBLE");
+                        h.cards.add(draw()); break;
+                    } else if (action.equals("STAND")) break;
+                    else { h.cards.add(draw()); if (calc(h.cards) > 21) break; }
+                }
+            }
+
+            while (true) {
+                int dTotal = calc(dealerCards);
+                if (dTotal < 17 || (dTotal == 17 && isSoft(dealerCards))) dealerCards.add(draw());
+                else break;
+            }
+            int dFinal = calc(dealerCards);
+            boolean dealerBJ = (dealerCards.size() == 2 && dFinal == 21);
+
+            for (Hand h : playerHands) {
+                int pTotal = calc(h.cards);
+                if (h.isBJ) { if (!dealerBJ) bankroll += BET_SIZE * 1.5; }
+                else if (pTotal > 21) { if (h.isOriginal) bankroll -= h.isPaidDouble ? BET_SIZE * 2 : BET_SIZE; }
+                else if (dealerBJ) { if (h.isOriginal) bankroll -= h.isPaidDouble ? BET_SIZE * 2 : BET_SIZE; }
+                else if (dFinal == 22) continue; // Push
+                else if (dFinal > 21 || pTotal > dFinal) bankroll += (h.isFreeDouble || h.isPaidDouble) ? BET_SIZE * 2 : BET_SIZE;
+                else if (pTotal < dFinal) { if (h.isOriginal) bankroll -= h.isPaidDouble ? BET_SIZE * 2 : BET_SIZE; }
+            }
+        }
+        return (( (rounds * BET_SIZE) + bankroll) / (rounds * BET_SIZE)) * 100;
+    }
+
+    public void calculateAllEORs(int rounds) {
+        rankToRemove = null;
+        double baseRTP = runSim(rounds);
+        System.out.printf("Baseline RTP: %.4f%%\n\n", baseRTP);
+        String[] testRanks = {"A", "2", "3", "4", "5", "6", "7", "8", "9", "10"};
+        System.out.println("Card | New RTP  | EOR");
+        for (String rank : testRanks) {
+            rankToRemove = rank;
+            double newRTP = runSim(rounds);
+            System.out.printf("%4s | %.4f%% | %+.4f%%\n", rank, newRTP, (newRTP - baseRTP));
+        }
+    }
+
+    class Hand {
+        List<String> cards = new ArrayList<>();
+        boolean isOriginal, isFreeDouble, isPaidDouble, isBJ, isDone;
+        Hand(String c1, String c2, boolean o) { 
+            cards.add(c1); cards.add(c2); isOriginal = o; if (calc(cards) == 21) isBJ = true;
+        }
+    }
+
+    public static void main(String[] args) {
+        new FreeBetEORSolitaire().calculateAllEORs(1000000);
+    }
+}
