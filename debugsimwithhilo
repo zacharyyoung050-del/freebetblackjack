@@ -1,0 +1,195 @@
+import java.util.*;
+
+public class FreeBetCountingDebug {
+    private static final int NUM_DECKS = 6;
+    private static final int SHUFFLE_POINT = 52;
+    private List<String> shoe;
+    private double bankroll = 0.0;
+    private int runningCount = 0;
+
+    public FreeBetCountingDebug() { shuffleShoe(); }
+
+    private void shuffleShoe() {
+        shoe = new ArrayList<>();
+        runningCount = 0;
+        String[] ranks = {"A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"};
+        for (int d = 0; d < NUM_DECKS; d++) {
+            for (String rank : ranks) {
+                for (int i = 0; i < 4; i++) shoe.add(rank);
+            }
+        }
+        Collections.shuffle(shoe);
+        System.out.println("\n[SYSTEM] Shoe Shuffled (6 Decks) | RC and TC Reset to 0\n");
+    }
+
+    private void updateCount(String card) {
+        int val = getRawValue(card);
+        if (val >= 2 && val <= 6) runningCount++;
+        else if (val == 10 || val == 1) runningCount--;
+    }
+
+    private int getTrueCount() {
+        double decksRemaining = shoe.size() / 52.0;
+        if (decksRemaining < 0.5) decksRemaining = 0.5;
+        return (int) Math.floor(runningCount / decksRemaining);
+    }
+
+    private String draw() {
+        if (shoe.size() <= SHUFFLE_POINT) shuffleShoe();
+        String card = shoe.remove(0);
+        updateCount(card);
+        return card;
+    }
+
+    private int getRawValue(String rank) {
+        if (rank.equals("A")) return 1;
+        if ("JQK".contains(rank) || rank.equals("10")) return 10;
+        return Integer.parseInt(rank);
+    }
+
+    private int calc(List<String> hand) {
+        int total = 0, aces = 0;
+        for (String card : hand) {
+            int val = getRawValue(card);
+            if (val == 1) { aces++; total += 11; }
+            else total += val;
+        }
+        while (total > 21 && aces > 0) { total -= 10; aces--; }
+        return total;
+    }
+
+    private boolean isSoft(List<String> hand) {
+        int total = 0, aces = 0;
+        for (String card : hand) {
+            if (getRawValue(card) == 1) { aces++; total += 11; }
+            else total += getRawValue(card);
+        }
+        while (total > 21 && aces > 0) { total -= 10; aces--; }
+        return aces > 0 && total <= 21;
+    }
+
+    private String getAction(List<String> pCards, int dUp, int totalHands, boolean isOriginal) {
+        int pTotal = calc(pCards);
+        boolean soft = isSoft(pCards);
+
+        // Pair Logic
+        if (pCards.size() == 2 && pCards.get(0).equals(pCards.get(1)) && getRawValue(pCards.get(0)) != 10) {
+            if (pTotal == 10) return "FREE_DOUBLE"; // 5-5 Case
+            if (totalHands < 4) return "FREE_SPLIT";
+        }
+
+        // Free Double Logic
+        if (pCards.size() == 2 && pTotal >= 9 && pTotal <= 11 && !pCards.contains("A")) return "FREE_DOUBLE";
+
+        // Aggressive Free Hand Strategy
+        if (!isOriginal && !soft) {
+            if (pTotal == 17 && ((dUp >= 7 && dUp <= 9) || dUp == 1)) return "AGGRESSIVE_HIT";
+            if (pTotal == 14 && dUp == 2) return "AGGRESSIVE_HIT";
+            if (pTotal == 13 && dUp == 2) return "HIT";
+            if (pTotal < 17 && dUp >= 7) return "HIT";
+            if (pTotal == 12 && (dUp >= 2 && dUp <= 4)) return "HIT";
+            if (pTotal < 9) return "HIT";
+            return "STAND";
+        }
+
+        // Standard Cash Hand Strategy
+        if (!soft) {
+            if (pTotal >= 17) return "STAND";
+            if (pTotal >= 13 && pTotal <= 16) return (dUp >= 3 && dUp <= 6) ? "STAND" : "HIT";
+            if (pTotal == 12) return (dUp >= 5 && dUp <= 6) ? "STAND" : "HIT";
+            return "HIT";
+        }
+        if (pTotal >= 19) return "STAND";
+        if (pTotal == 18) return (dUp >= 9) ? "HIT" : "STAND";
+        return "HIT";
+    }
+
+    public void runTerminalDebug(int rounds, double betSize) {
+        for (int r = 1; r <= rounds; r++) {
+            int tcAtStart = getTrueCount();
+            int rcAtStart = runningCount;
+            System.out.println("--- ROUND " + r + " | RC: " + rcAtStart + " | TC: " + tcAtStart + " ---");
+            
+            String dUpStr = draw(), dHidden = draw();
+            int dUp = getRawValue(dUpStr);
+            List<String> dealerCards = new ArrayList<>(Arrays.asList(dUpStr, dHidden));
+            System.out.println("Dealer Upcard: [" + dUpStr + "]");
+
+            List<Hand> playerHands = new ArrayList<>();
+            playerHands.add(new Hand(draw(), draw(), true));
+
+            for (int i = 0; i < playerHands.size(); i++) {
+                Hand h = playerHands.get(i);
+                while (true) {
+                    int currentTotal = calc(h.cards);
+                    if (h.isBJ || h.isDone || currentTotal > 21) break;
+
+                    String action = getAction(h.cards, dUp, playerHands.size(), h.isOriginal);
+                    System.out.print("Hand " + (i + 1) + (h.isOriginal ? " (Cash)" : " (FREE)") + ": " + h.cards + " (" + currentTotal + ")");
+
+                    if (action.equals("FREE_SPLIT")) {
+                        System.out.println(" -> Decision: FREE SPLIT");
+                        String splitCard = h.cards.remove(1);
+                        h.cards.add(draw());
+                        playerHands.add(new Hand(splitCard, draw(), false));
+                        if (splitCard.equals("A")) { h.isDone = true; playerHands.get(playerHands.size()-1).isDone = true; break; }
+                        continue; 
+                    } else if (action.startsWith("FREE_DOUBLE")) {
+                        h.isFreeDouble = true; 
+                        String c = draw(); h.cards.add(c);
+                        System.out.println(" -> Decision: FREE DOUBLE. Drew: " + c + " (Final: " + calc(h.cards) + ")");
+                        break;
+                    } else if (action.equals("AGGRESSIVE_HIT")) {
+                        String c = draw(); h.cards.add(c);
+                        System.out.println(" -> Decision: AGGRESSIVE HIT. Drew: " + c);
+                    } else if (action.equals("STAND")) {
+                        System.out.println(" -> Decision: STAND");
+                        break;
+                    } else {
+                        String c = draw(); h.cards.add(c);
+                        System.out.println(" -> Decision: HIT. Drew: " + c);
+                    }
+                }
+                if (calc(h.cards) > 21) System.out.println("Hand " + (i+1) + " BUSTED (" + calc(h.cards) + ")");
+            }
+
+            System.out.print("Dealer Hand: " + dealerCards);
+            while (true) {
+                int dTotal = calc(dealerCards);
+                if (dTotal < 17 || (dTotal == 17 && isSoft(dealerCards))) {
+                    String n = draw(); dealerCards.add(n); System.out.print(" -> " + n);
+                } else break;
+            }
+            int dFinal = calc(dealerCards);
+            boolean dealerBJ = (dealerCards.size() == 2 && dFinal == 21);
+            System.out.println(" (Final: " + dFinal + ")");
+
+            double roundProfit = 0;
+            for (Hand h : playerHands) {
+                int pTotal = calc(h.cards);
+                if (h.isBJ) roundProfit += dealerBJ ? 0 : betSize * 1.5;
+                else if (pTotal > 21) roundProfit += h.isOriginal ? -betSize : 0;
+                else if (dealerBJ) roundProfit += h.isOriginal ? -betSize : 0;
+                else if (dFinal == 22) roundProfit += 0;
+                else if (dFinal > 21 || pTotal > dFinal) roundProfit += h.isFreeDouble ? betSize * 2 : betSize;
+                else if (pTotal == dFinal) roundProfit += 0;
+                else roundProfit += h.isOriginal ? -betSize : 0;
+            }
+            bankroll += roundProfit;
+            System.out.println("ROUND NET: $" + roundProfit + " | BANKROLL: $" + bankroll + "\n");
+        }
+    }
+
+    class Hand {
+        List<String> cards = new ArrayList<>();
+        boolean isOriginal, isFreeDouble, isBJ, isDone;
+        Hand(String c1, String c2, boolean o) { 
+            cards.add(c1); cards.add(c2); isOriginal = o;
+            if (calc(cards) == 21) isBJ = true;
+        }
+    }
+
+    public static void main(String[] args) {
+        new FreeBetCountingDebug().runTerminalDebug(50, 10.0);
+    }
+}
