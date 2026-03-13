@@ -1,0 +1,190 @@
+import java.util.*;
+
+public class FreeBetMillionSim {
+    private static final int NUM_DECKS = 6;
+    private static final int SHUFFLE_POINT = 52;
+    private static final int TOTAL_ROUNDS = 10_000_000;
+    private static final double BET_SIZE = 10.0;
+    
+    private List<String> shoe;
+    private double bankroll = 0.0;
+
+    public static void main(String[] args) {
+        new FreeBetMillionSim().runSimulation();
+    }
+
+    public void runSimulation() {
+        shuffleShoe();
+        
+        System.out.println("Running 1,000,000 rounds...");
+        for (int r = 1; r <= TOTAL_ROUNDS; r++) {
+            playRound();
+        }
+
+        double totalWagered = TOTAL_ROUNDS * BET_SIZE;
+        double houseEdge = (-(bankroll) / totalWagered) * 100;
+
+        System.out.println("\n--- SIMULATION RESULTS ---");
+        System.out.println("Rounds Played:     " + String.format("%, d", TOTAL_ROUNDS));
+        System.out.format("Final Bankroll:    $%.2f%n", bankroll);
+        System.out.format("Net Per Round:     $%.4f%n", (bankroll / TOTAL_ROUNDS));
+        System.out.format("House Edge:        %.4f%%%n", houseEdge);
+        System.out.println("--------------------------");
+    }
+
+    private void playRound() {
+        String dUpStr = draw(), dHidden = draw();
+        int dUp = getValue(dUpStr);
+        List<String> dealerCards = new ArrayList<>(Arrays.asList(dUpStr, dHidden));
+
+        List<Hand> playerHands = new ArrayList<>();
+        playerHands.add(new Hand(draw(), draw(), true));
+
+        // Player Turn Logic
+        for (int i = 0; i < playerHands.size(); i++) {
+            Hand h = playerHands.get(i);
+            while (true) {
+                int currentTotal = calc(h.cards);
+                if (h.isBJ || h.isDone || currentTotal > 21) break;
+
+                String action = getAction(h.cards, dUp, playerHands.size(), h.isOriginal);
+
+                if (action.equals("FREE_SPLIT")) {
+                    String splitCard = h.cards.remove(1);
+                    boolean isAces = splitCard.equals("A");
+                    h.cards.add(draw());
+                    Hand newHand = new Hand(splitCard, draw(), false);
+                    playerHands.add(newHand);
+                    if (isAces) { h.isDone = true; newHand.isDone = true; break; }
+                } else if (action.startsWith("FREE_DOUBLE")) {
+                    h.isFreeDouble = true; 
+                    h.cards.add(draw());
+                    break;
+                } else if (action.equals("AGGRESSIVE_HIT") || action.equals("HIT")) {
+                    h.cards.add(draw());
+                } else if (action.equals("STAND")) {
+                    break;
+                } else {
+                    break; 
+                }
+            }
+        }
+
+        // Dealer Turn Logic
+        while (true) {
+            int dTotal = calc(dealerCards);
+            if (dTotal < 17 || (dTotal == 17 && isSoft(dealerCards))) {
+                dealerCards.add(draw());
+            } else break;
+        }
+        int dFinal = calc(dealerCards);
+        boolean dealerBJ = (dealerCards.size() == 2 && dFinal == 21);
+
+        // Settlement Logic
+        for (Hand h : playerHands) {
+            int pTotal = calc(h.cards);
+            double outcome = 0;
+            if (h.isBJ) {
+                outcome = dealerBJ ? 0 : BET_SIZE * 1.5;
+            } else if (pTotal > 21) {
+                outcome = h.isOriginal ? -BET_SIZE : 0;
+            } else if (dealerBJ) {
+                outcome = h.isOriginal ? -BET_SIZE : 0;
+            } else if (dFinal == 22) {
+                outcome = 0; 
+            } else if (dFinal > 21 || pTotal > dFinal) {
+                outcome = h.isFreeDouble ? BET_SIZE * 2 : BET_SIZE;
+            } else if (pTotal == dFinal) {
+                outcome = 0;
+            } else {
+                outcome = h.isOriginal ? -BET_SIZE : 0;
+            }
+            bankroll += outcome;
+        }
+    }
+
+    private void shuffleShoe() {
+        shoe = new ArrayList<>();
+        String[] ranks = {"A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"};
+        for (int d = 0; d < NUM_DECKS; d++) {
+            for (String rank : ranks) {
+                for (int i = 0; i < 4; i++) shoe.add(rank);
+            }
+        }
+        Collections.shuffle(shoe);
+    }
+
+    private String draw() {
+        if (shoe.size() <= SHUFFLE_POINT) shuffleShoe();
+        return shoe.remove(0);
+    }
+
+    private int getValue(String rank) {
+        if (rank.equals("A")) return 1;
+        if ("JQK".contains(rank) || rank.equals("10")) return 10;
+        return Integer.parseInt(rank);
+    }
+
+    private int calc(List<String> hand) {
+        int total = 0, aces = 0;
+        for (String card : hand) {
+            int val = getValue(card);
+            if (val == 1) { aces++; total += 11; }
+            else total += val;
+        }
+        while (total > 21 && aces > 0) { total -= 10; aces--; }
+        return total;
+    }
+
+    private boolean isSoft(List<String> hand) {
+        int total = 0, aces = 0;
+        for (String card : hand) {
+            if (getValue(card) == 1) { aces++; total += 11; }
+            else total += getValue(card);
+        }
+        while (total > 21 && aces > 0) { total -= 10; aces--; }
+        return aces > 0 && total <= 21;
+    }
+
+    private String getAction(List<String> pCards, int dUp, int totalHands, boolean isOriginal) {
+        int pTotal = calc(pCards);
+        boolean soft = isSoft(pCards);
+
+        // YOUR UPDATED LOGIC
+        if (pCards.size() == 2 && pCards.get(0).equals(pCards.get(1)) && getValue(pCards.get(0)) != 10) {
+            if (pTotal == 10) return "FREE_DOUBLE";
+            if (totalHands < 4) return "FREE_SPLIT";
+        }
+
+        if (pCards.size() == 2 && pTotal >= 9 && pTotal <= 11 && !pCards.contains("A")) return "FREE_DOUBLE";
+
+        if (!isOriginal && !soft) {
+            if (pTotal == 17 && ((dUp >= 7 && dUp <= 9) || dUp == 1)) return "AGGRESSIVE_HIT";
+            if (pTotal == 14 && dUp == 2) return "AGGRESSIVE_HIT";
+            if (pTotal == 13 && dUp == 2) return "HIT";
+            if (pTotal < 17 && dUp >= 7) return "HIT";
+            if (pTotal == 12 && (dUp == 2 || dUp == 3 || dUp == 4)) return "HIT";
+            if (pTotal < 9) return "HIT";
+            return "STAND";
+        }
+
+        if (!soft) {
+            if (pTotal >= 17) return "STAND";
+            if (pTotal >= 13 && pTotal <= 16) return (dUp >= 3 && dUp <= 6) ? "STAND" : "HIT";
+            if (pTotal == 12) return (dUp >= 5 && dUp <= 6) ? "STAND" : "HIT";
+            return "HIT";
+        }
+        if (pTotal >= 19) return "STAND";
+        if (pTotal == 18) return (dUp >= 9) ? "HIT" : "STAND";
+        return "HIT";
+    }
+
+    class Hand {
+        List<String> cards = new ArrayList<>();
+        boolean isOriginal, isFreeDouble, isBJ, isDone;
+        Hand(String c1, String c2, boolean o) { 
+            cards.add(c1); cards.add(c2); isOriginal = o;
+            if (calc(cards) == 21) isBJ = true;
+        }
+    }
+}
